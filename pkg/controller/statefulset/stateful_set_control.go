@@ -344,7 +344,7 @@ func (ssc *defaultStatefulSetControl) updateStatefulSet(
 				minUpdatedReadyPodsIntStr := intstrutil.Parse(minUpdatedReadyPods)
 				minUpdatedReadyPodsCount, err = intstrutil.GetScaledValueFromIntOrPercent(&minUpdatedReadyPodsIntStr, int(*set.Spec.Replicas), true)
 				if err != nil {
-					klog.Errorf("Failed to GetScaledValueFromIntOrPercent of minUpdatedReadyPods for %v: %v", set, err)
+					klog.ErrorS(err, "Failed to GetScaledValueFromIntOrPercent of minUpdatedReadyPods for StatefulSet", "statefulSet", klog.KObj(set))
 				}
 			}
 			updatedReadyReplicas := set.Status.UpdatedReadyReplicas
@@ -354,13 +354,13 @@ func (ssc *defaultStatefulSetControl) updateStatefulSet(
 			if int32(minUpdatedReadyPodsCount) <= updatedReadyReplicas {
 				// pre-download images for new revision
 				if err := ssc.createImagePullJobsForInPlaceUpdate(set, currentRevision, updateRevision); err != nil {
-					klog.Errorf("Failed to create ImagePullJobs for %v: %v", set, err)
+					klog.ErrorS(err, "Failed to create ImagePullJobs for StatefulSet", "statefulSet", klog.KObj(set))
 				}
 			}
 		} else {
 			// delete ImagePullJobs if revisions have been consistent
 			if err := imagejobutilfunc.DeleteJobsForWorkload(sigsruntimeClient, set); err != nil {
-				klog.Errorf("Failed to delete ImagePullJobs for %v: %v", set, err)
+				klog.ErrorS(err, "Failed to delete ImagePullJobs for StatefulSet", "statefulSet", klog.KObj(set))
 			}
 		}
 	}
@@ -546,11 +546,7 @@ func (ssc *defaultStatefulSetControl) updateStatefulSet(
 			if monotonic {
 				return &status, nil
 			} else if decreaseAndCheckMaxUnavailable(scaleMaxUnavailable) {
-				klog.V(4).Infof(
-					"StatefulSet %s/%s Pod %s is Creating, and break pods scale",
-					set.Namespace,
-					set.Name,
-					replicas[i].Name)
+				klog.V(4).InfoS("StatefulSet's Pod is Creating, and break pods scale", "statefulSet", klog.KObj(set), "pod", klog.KObj(replicas[i]))
 				break
 			}
 			// pod created, no more work possible for this round
@@ -559,24 +555,15 @@ func (ssc *defaultStatefulSetControl) updateStatefulSet(
 		// If we find a Pod that is currently terminating, we must wait until graceful deletion
 		// completes before we continue to make progress.
 		if isTerminating(replicas[i]) && monotonic {
-			klog.V(4).Infof(
-				"StatefulSet %s/%s is waiting for Pod %s to Terminate",
-				set.Namespace,
-				set.Name,
-				replicas[i].Name)
+			klog.V(4).InfoS("StatefulSet is waiting for Pod to Terminate", "statefulSet", klog.KObj(set), "pod", klog.KObj(replicas[i]))
 			return &status, nil
 		} else if isTerminating(replicas[i]) && decreaseAndCheckMaxUnavailable(scaleMaxUnavailable) {
-			klog.V(4).Infof(
-				"StatefulSet %s/%s Pod %s is Terminating, and break pods scale",
-				set.Namespace,
-				set.Name,
-				replicas[i].Name)
+			klog.V(4).InfoS("StatefulSet Pod is Terminating, and break pods scale", "statefulSet", klog.KObj(set), "pod", klog.KObj(replicas[i]))
 			break
 		}
 		// Update InPlaceUpdateReady condition for pod
 		if res := ssc.inplaceControl.Refresh(replicas[i], nil); res.RefreshErr != nil {
-			klog.Errorf("StatefulSet %s/%s failed to update pod %s condition for inplace: %v",
-				set.Namespace, set.Name, replicas[i].Name, res.RefreshErr)
+			klog.ErrorS(res.RefreshErr, "StatefulSet failed to update pod condition for inplace", "statefulSet", klog.KObj(set), "pod", klog.KObj(replicas[i]))
 			return &status, res.RefreshErr
 		} else if res.DelayDuration > 0 {
 			durationStore.Push(getStatefulSetKey(set), res.DelayDuration)
@@ -590,28 +577,22 @@ func (ssc *defaultStatefulSetControl) updateStatefulSet(
 				if waitTime > 0 {
 					// make sure we check later
 					durationStore.Push(getStatefulSetKey(set), waitTime)
-					klog.V(4).Infof(
-						"StatefulSet %s/%s needs to wait %s for the Pod %s to be Running and Available after being"+
-							" Ready for %d seconds",
-						set.Namespace,
-						set.Name,
-						waitTime,
-						replicas[i].Name,
-						minReadySeconds)
+					klog.V(4).InfoS("StatefulSet needs to wait for the Pod to be Running and Available after being Ready for seconds",
+						"statefulSet", klog.KObj(set),
+						"waitTime", waitTime,
+						"pod", klog.KObj(replicas[i]),
+						"minReadySeconds", minReadySeconds)
 				} else {
-					klog.V(4).Infof(
-						"StatefulSet %s/%s is waiting for Pod %s to be Running and Ready",
-						set.Namespace,
-						set.Name,
-						replicas[i].Name)
+					klog.V(4).InfoS("StatefulSet is waiting for Pod to be Running and Ready",
+						"statefulSet", klog.KObj(set),
+						"pod", klog.KObj(replicas[i]))
 				}
 				return &status, nil
 			} else if !isAvailable && decreaseAndCheckMaxUnavailable(scaleMaxUnavailable) {
-				klog.V(4).Infof(
-					"StatefulSet %s/%s Pod %s is unavailable, and break pods scale",
-					set.Namespace,
-					set.Name,
-					replicas[i].Name)
+				klog.V(4).InfoS(
+					"StatefulSet Pod is unavailable, and break pods scale",
+					"statefulSet", klog.KObj(set),
+					"pod", klog.KObj(replicas[i]))
 				if waitTime > 0 {
 					// make sure we check later
 					durationStore.Push(getStatefulSetKey(set), waitTime)
@@ -680,10 +661,8 @@ func (ssc *defaultStatefulSetControl) updateStatefulSet(
 			}
 			return &status, nil
 		}
-		klog.V(2).Infof("StatefulSet %s/%s terminating Pod %s for scale down",
-			set.Namespace,
-			set.Name,
-			condemned[target].Name)
+		klog.V(2).InfoS("StatefulSet terminating Pod for scale down",
+			"statefulSet", klog.KObj(set), "pod", klog.KObj(condemned[target]))
 
 		modified, err := ssc.deletePod(set, condemned[target])
 		if err != nil || modified {
@@ -723,7 +702,7 @@ func (ssc *defaultStatefulSetControl) rollingUpdateStatefulsetPods(
 
 	// If update expectations have not satisfied yet, skip updating pods
 	if updateSatisfied, _, updateDirtyPods := updateExpectations.SatisfiedExpectations(getStatefulSetKey(set), updateRevision.Name); !updateSatisfied {
-		klog.V(4).Infof("Not satisfied update for %v, updateDirtyPods=%v", getStatefulSetKey(set), updateDirtyPods)
+		klog.V(4).InfoS("Not satisfied update for statefulSet", "statefulSet", klog.KObj(set), "updateDirtyPods", updateDirtyPods)
 		return status, nil
 	}
 
@@ -780,11 +759,8 @@ func (ssc *defaultStatefulSetControl) rollingUpdateStatefulsetPods(
 			unavailablePods.Insert(replicas[target].Name)
 		} else if completedErr := opts.CheckPodUpdateCompleted(replicas[target]); completedErr != nil {
 			// 2. count pod as unavailable if it's in-place updating and not ready
-			klog.V(4).Infof("StatefulSet %s/%s check Pod %s in-place update not-ready: %v",
-				set.Namespace,
-				set.Name,
-				replicas[target].Name,
-				completedErr)
+			klog.V(4).ErrorS(completedErr, "StatefulSet found Pod in-place update not-ready",
+				"statefulSet", klog.KObj(set), "pod", klog.KObj(replicas[target]))
 			unavailablePods.Insert(replicas[target].Name)
 		} else if isAvailable, waitTime := isRunningAndAvailable(replicas[target], minReadySeconds); !isAvailable {
 			// 3. count pod as unavailable if it's not available yet given the minReadySeconds requirement
@@ -798,7 +774,7 @@ func (ssc *defaultStatefulSetControl) rollingUpdateStatefulsetPods(
 	}
 
 	updateIndexes := sortPodsToUpdate(set.Spec.UpdateStrategy.RollingUpdate, updateRevision.Name, *set.Spec.Replicas, replicas)
-	klog.V(3).Infof("Prepare to update pods indexes %v for StatefulSet %s", updateIndexes, getStatefulSetKey(set))
+	klog.V(3).InfoS("Prepare to update pods indexes for StatefulSet", "statefulSet", klog.KObj(set), "podIndexes", updateIndexes)
 	// update pods in sequence
 	for _, target := range updateIndexes {
 
@@ -810,12 +786,8 @@ func (ssc *defaultStatefulSetControl) rollingUpdateStatefulsetPods(
 		// the unavailable pods count exceed the maxUnavailable and the target is available, so we can't process it,
 		// wait for unhealthy Pods on update
 		if len(unavailablePods) >= maxUnavailable && !unavailablePods.Has(replicas[target].Name) {
-			klog.V(4).Infof(
-				"StatefulSet %s/%s is waiting for unavailable Pods %v to update, blocked pod %s",
-				set.Namespace,
-				set.Name,
-				unavailablePods.List(),
-				replicas[target].Name)
+			klog.V(4).InfoS("StatefulSet was waiting for unavailable Pods to update, blocked pod",
+				"statefulSet", klog.KObj(set), "unavailablePods", unavailablePods.List(), "blockedPod", klog.KObj(replicas[target]))
 			return status, nil
 		}
 
@@ -827,10 +799,7 @@ func (ssc *defaultStatefulSetControl) rollingUpdateStatefulsetPods(
 				return status, inplaceUpdateErr
 			}
 			if !inplacing {
-				klog.V(2).Infof("StatefulSet %s/%s terminating Pod %s for update",
-					set.Namespace,
-					set.Name,
-					replicas[target].Name)
+				klog.V(2).InfoS("StatefulSet terminating Pod for update", "statefulSet", klog.KObj(set), "pod", klog.KObj(replicas[target]))
 				if _, err := ssc.deletePod(set, replicas[target]); err != nil {
 					return status, err
 				}
@@ -853,8 +822,7 @@ func (ssc *defaultStatefulSetControl) deletePod(set *appsv1beta1.StatefulSet, po
 		if updated, _, err := ssc.lifecycleControl.UpdatePodLifecycle(pod, appspub.LifecycleStatePreparingDelete, markPodNotReady); err != nil {
 			return false, err
 		} else if updated {
-			klog.V(3).Infof("StatefulSet %s scaling update pod %s lifecycle to PreparingDelete",
-				getStatefulSetKey(set), pod.Name)
+			klog.V(3).InfoS("StatefulSet scaling update pod lifecycle to PreparingDelete", "statefulSet", klog.KObj(set), "pod", klog.KObj(pod))
 			return true, nil
 		}
 		return false, nil
@@ -878,8 +846,8 @@ func (ssc *defaultStatefulSetControl) refreshPodState(set *appsv1beta1.StatefulS
 
 	res := ssc.inplaceControl.Refresh(pod, opts)
 	if res.RefreshErr != nil {
-		klog.Errorf("AdvancedStatefulSet %s failed to update pod %s condition for inplace: %v",
-			getStatefulSetKey(set), pod.Name, res.RefreshErr)
+		klog.ErrorS(res.RefreshErr, "AdvancedStatefulSet failed to update pod condition for inplace",
+			"statefulSet", klog.KObj(set), "pod", klog.KObj(pod))
 		return false, 0, res.RefreshErr
 	}
 
@@ -920,8 +888,7 @@ func (ssc *defaultStatefulSetControl) refreshPodState(set *appsv1beta1.StatefulS
 		if updated, _, err := ssc.lifecycleControl.UpdatePodLifecycle(pod, state, markPodNotReady); err != nil {
 			return false, 0, err
 		} else if updated {
-			klog.V(3).Infof("AdvancedStatefulSet %s update pod %s lifecycle to %s",
-				getStatefulSetKey(set), pod.Name, state)
+			klog.V(3).InfoS("AdvancedStatefulSet updated pod lifecycle", "statefulSet", klog.KObj(set), "pod", klog.KObj(pod), "lifecycleState", state)
 			return true, res.DelayDuration, nil
 		}
 	}
@@ -963,8 +930,7 @@ func (ssc *defaultStatefulSetControl) inPlaceUpdatePod(
 			if set.Spec.Lifecycle != nil && lifecycle.IsPodHooked(set.Spec.Lifecycle.InPlaceUpdate, pod) {
 				markPodNotReady := set.Spec.Lifecycle.InPlaceUpdate.MarkPodNotReady
 				if updated, _, err = ssc.lifecycleControl.UpdatePodLifecycle(pod, appspub.LifecycleStatePreparingUpdate, markPodNotReady); err == nil && updated {
-					klog.V(3).Infof("StatefulSet %s updated pod %s lifecycle to PreparingUpdate",
-						getStatefulSetKey(set), pod.Name)
+					klog.V(3).InfoS("StatefulSet updated pod lifecycle to PreparingUpdate", "statefulSet", klog.KObj(set), "pod", klog.KObj(pod))
 				}
 				return true, err
 			}
@@ -976,8 +942,7 @@ func (ssc *defaultStatefulSetControl) inPlaceUpdatePod(
 				inPlaceUpdateHandler = set.Spec.Lifecycle.InPlaceUpdate
 			}
 			if updated, _, err = ssc.lifecycleControl.UpdatePodLifecycleWithHandler(pod, appspub.LifecycleStatePreparingUpdate, inPlaceUpdateHandler); err == nil && updated {
-				klog.V(3).Infof("StatefulSet %s updated pod %s lifecycle to PreparingUpdate",
-					getStatefulSetKey(set), pod.Name)
+				klog.V(3).InfoS("StatefulSet updated pod lifecycle to PreparingUpdate", "statefulSet", klog.KObj(set), "pod", klog.KObj(pod))
 			}
 			return true, err
 		case appspub.LifecycleStatePreparingUpdate:
